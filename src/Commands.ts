@@ -24,6 +24,14 @@ export class Commands
 
     private m_is_overstrike_mode: boolean;
 
+    // The position the previous Home/End press parked the cursor at when moving to the
+    // top/bottom of the window. The next press treats the cursor as still "at the window
+    // edge" only if it has not moved from this position. This is scroll-proof, unlike
+    // comparing the cursor to editor.visibleRanges, because revealing the edge line
+    // scrolls the viewport so the reported edge no longer matches the cursor line.
+    private m_home_window_position: vscode.Position | null = null;
+    private m_end_window_position: vscode.Position | null = null;
+
     public constructor(context: vscode.ExtensionContext,
         status_bar: Status_bar,
         scrap_manager: Scrap_manager,
@@ -473,9 +481,14 @@ export class Commands
             let visible_top_position = editor.visibleRanges[0].start;
 
             let at_file_start = ((cursor_position.line === 0) && (cursor_position.character === 0));
-            let at_window_start = ((cursor_position.line <= visible_top_position.line) && (cursor_position.character === 0)) ||
+            let at_window_start = ((this.m_home_window_position !== null) && this.m_home_window_position.isEqual(cursor_position)) ||
                 this.m_line_marking.get_at_window_start(visible_top_position);
             let at_line_start = (cursor_position.character === 0) || this.m_line_marking.is_marking_mode;
+
+            // The remembered window-top position is consumed by this press. Clear it by
+            // default and re-arm it below only when this press parks the cursor at the
+            // top of the window.
+            this.m_home_window_position = null;
 
             if (at_file_start) { return; }
 
@@ -508,11 +521,13 @@ export class Commands
             if (at_line_start) {
                 if (this.m_marking.is_marking_mode) {
                     this.m_marking.select(editor, visible_top_position);
+                    this.m_home_window_position = editor.selection.active;
                     return;
                 }
 
                 if (this.m_line_marking.is_marking_mode) {
                     this.m_line_marking.select_from_start(editor, visible_top_position.line);
+                    this.m_home_window_position = editor.selection.active;
                     return;
                 }
 
@@ -522,6 +537,7 @@ export class Commands
                 }
 
                 utility.move_cursor(editor, visible_top_position);
+                this.m_home_window_position = editor.selection.active;
 
                 return;
             }
@@ -571,8 +587,6 @@ export class Commands
             let cursor_position = editor.selection.active;
             let visible_bottom_position = editor.visibleRanges[0].end;
 
-            let on_first_line = cursor_position.line === 0;
-
             let file_end_line_range = editor.document.lineAt(editor.document.lineCount - 1).range;
             let window_end_line_range = editor.document.lineAt(visible_bottom_position).range;
             let current_line_range = editor.document.lineAt(cursor_position).range;
@@ -580,18 +594,8 @@ export class Commands
             let at_file_end = ((cursor_position.line === file_end_line_range.end.line) &&
                 (cursor_position.character === file_end_line_range.end.character));
 
-            let at_window_end: boolean = false;
-            at_window_end ||= ((cursor_position.line >= window_end_line_range.end.line) &&
-                (cursor_position.character === window_end_line_range.end.character));
-
-            if (!on_first_line) {
-                let window_second_to_end_line_range = editor.document.lineAt(visible_bottom_position.line - 1).range;
-                at_window_end ||= ((cursor_position.line >= window_second_to_end_line_range.end.line) &&
-                    (cursor_position.character === window_second_to_end_line_range.end.character));
-                if (this.m_line_marking.is_marking_mode) {
-                    at_window_end ||= (cursor_position.line >= window_second_to_end_line_range.end.line);
-                }
-            }
+            let at_window_end: boolean = ((this.m_end_window_position !== null) &&
+                this.m_end_window_position.isEqual(cursor_position));
 
             if (this.m_line_marking.is_marking_mode) {
                 at_window_end ||= cursor_position.line >= window_end_line_range.end.line;
@@ -599,6 +603,11 @@ export class Commands
 
             let at_line_end = (cursor_position.character === current_line_range.end.character) ||
                 this.m_line_marking.is_marking_mode;
+
+            // The remembered window-bottom position is consumed by this press. Clear it by
+            // default and re-arm it below only when this press parks the cursor at the
+            // bottom of the window.
+            this.m_end_window_position = null;
 
             if (at_file_end) { return; }
 
@@ -631,11 +640,13 @@ export class Commands
             if (at_line_end) {
                 if (this.m_marking.is_marking_mode) {
                     this.m_marking.select(editor, visible_bottom_position);
+                    this.m_end_window_position = editor.selection.active;
                     return;
                 }
 
                 if (this.m_line_marking.is_marking_mode) {
                     this.m_line_marking.select_from_start(editor, window_end_line_range.end.line);
+                    this.m_end_window_position = editor.selection.active;
                     return;
                 }
 
@@ -645,6 +656,7 @@ export class Commands
                 }
 
                 utility.move_cursor(editor, visible_bottom_position);
+                this.m_end_window_position = editor.selection.active;
 
                 return;
             }
